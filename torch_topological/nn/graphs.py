@@ -163,7 +163,11 @@ class TOGL(nn.Module):
 
                 f_vertices = filtered_v[filt_index][vi:vj]
                 f_edges = filtered_e[filt_index][ei:ej]
-
+                
+                if len(vertices) == 0 or len(edges) == 0:
+                        print(f"Skipping empty slice: vertices {len(vertices)}, edges {len(edges)}")
+                        continue
+                
                 persistence_diagram = self._compute_persistent_homology(
                     vertices, f_vertices, edges, f_edges, offset
                 )
@@ -200,6 +204,12 @@ class TOGL(nn.Module):
         # vertices, sorted by dimension.
         generators = st.lower_star_persistence_generators()
         generators_regular, generators_essential = generators
+        
+        if len(generators_regular) == 0:
+            #print("Warning: generators_regular is empty")
+            #print(vertices, f_vertices, edges, f_edges, offset)
+            #print(st)
+            return torch.stack((f_vertices, f_vertices), dim=1)
 
         # TODO: Let's think about how to leverage *all* generators in
         # *all* dimensions.
@@ -268,10 +278,11 @@ class TopoGCN(torch.nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.layers = nn.ModuleList([GCNConv(1, 8), GCNConv(8, 2)])
+        self.layers = nn.ModuleList([GCNConv(1, 32), GCNConv(32, 16)])
 
         self.pooling_fn = global_mean_pool
-        self.togl = TOGL(8, 16, 32, 16, "mean")
+        self.togl = TOGL(32, 64, 64, 32, "mean")
+        self.fc = nn.Linear(16, 10)
 
     def forward(self, data):
         x, edge_index = data.x, data.edge_index
@@ -280,39 +291,41 @@ class TopoGCN(torch.nn.Module):
             x = layer(x, edge_index)
 
         x = self.togl(x, data)
-
+        
         for layer in self.layers[1:]:
             x = layer(x, edge_index)
-
+        
         x = self.pooling_fn(x, data.batch)
+        x = self.fc(x)
+        
         return x
 
 
-B = 64
-N = 100
-p = 0.2
+#B = 64
+#N = 100
+#p = 0.2
 
-if torch.cuda.is_available():
-    dev = "cuda:0"
-else:
-    dev = "cpu"
+#if torch.cuda.is_available():
+#    dev = "cuda:0"
+#else:
+#    dev = "cpu"
 
-print("Selected device:", dev)
+#print("Selected device:", dev)
 
-data_list = [
-    Data(x=torch.rand(N, 1), edge_index=erdos_renyi_graph(N, p), num_nodes=N)
-    for i in range(B)
-]
+#data_list = [
+#    Data(x=torch.rand(N, 1), edge_index=erdos_renyi_graph(N, p), num_nodes=N)
+#    for i in range(B)
+#]
 
-loader = DataLoader(data_list, batch_size=8)
+#loader = DataLoader(data_list, batch_size=8)
 
-model = TopoGCN().to(dev)
+#model = TopoGCN().to(dev)
 
-for index, batch in enumerate(loader):
-    print(batch)
-    batch = batch.to(dev)
+#for index, batch in enumerate(loader):
+#    print(batch)
+#    batch = batch.to(dev)
 
-    vertex_slices = torch.Tensor(batch._slice_dict["x"]).long()
-    edge_slices = torch.Tensor(batch._slice_dict["edge_index"]).long()
+#    vertex_slices = torch.Tensor(batch._slice_dict["x"]).long()
+#    edge_slices = torch.Tensor(batch._slice_dict["edge_index"]).long()
 
-    model(batch)
+#    model(batch)
