@@ -18,6 +18,10 @@ transform = transforms.Compose([transforms.ToTensor()])
 mnist_train = MNIST(root='data', train=True, download=True, transform=transform)
 mnist_test = MNIST(root='data', train=False, download=True, transform=transform)
 
+mnist_train = torch.utils.data.Subset(mnist_train, range(10000))
+mnist_test = torch.utils.data.Subset(mnist_test, range(1000))
+
+
 def mnist_to_graph(data):
     graphs = []
     for img, label in data:
@@ -43,10 +47,11 @@ def create_edge_index(height, width):
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
     return edge_index
 
+
 train_graphs = mnist_to_graph(mnist_train)
 test_graphs = mnist_to_graph(mnist_test)
 
-# 模型定义部分
+
 class GCN(nn.Module):
     def __init__(self):
         super(GCN, self).__init__()
@@ -61,16 +66,18 @@ class GCN(nn.Module):
         x = F.relu(self.conv2(x, edge_index))
         x = x.view(-1, 64 * 28 * 28)
         x = F.relu(self.fc1(x))
-        x = F.log_softmax(self.fc2(x), dim=1)
+        x = self.fc2(x)
         return x
 
-# 训练和评估部分
+
+
 train_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=True)
 test_loader = DataLoader(test_graphs, batch_size=batch_size, shuffle=False)
 
 model = GCN()
 criterion = nn.CrossEntropyLoss()
 optimizer = Adam(model.parameters(), lr=learning_rate)
+
 
 def train():
     model.train()
@@ -81,6 +88,7 @@ def train():
         loss.backward()
         optimizer.step()
 
+
 @torch.no_grad()
 def test(loader):
     model.eval()
@@ -90,6 +98,7 @@ def test(loader):
         pred = output.max(1)[1]
         correct += pred.eq(data.y).sum().item()
     return correct / len(loader.dataset)
+
 
 for epoch in range(1, epochs + 1):
     train()
