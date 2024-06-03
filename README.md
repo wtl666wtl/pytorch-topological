@@ -24,4 +24,4 @@ python try.py
 ```
 
 ## Reference
-(TOPOLOGICAL GRAPH NEURAL NETWORKS)[https://arxiv.org/pdf/2102.07835]
+[TOPOLOGICAL GRAPH NEURAL NETWORKS](https://arxiv.org/pdf/2102.07835)
