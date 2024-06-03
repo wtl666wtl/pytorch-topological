@@ -17,7 +17,7 @@ run normal TOGL
 python main.py
 ```
 
-run Attention-based TOGL
+run attention-based TOGL
 
 ```
 python try.py
