@@ -6,10 +6,11 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch_geometric.nn import GCNConv, global_mean_pool
 from torch_geometric.loader import DataLoader
 from torch_geometric.datasets import GNNBenchmarkDataset
+from torch_topological.nn.graphs_new import TOGLWithSelfAttention
 from tqdm import tqdm
 
 # Parameters
-batch_size = 1024
+batch_size = 64
 learning_rate = 0.01
 epochs = 200
 
@@ -27,13 +28,13 @@ test_dataset = torch.utils.data.Subset(test_dataset, range(1000))
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-# GCN model
-class GCN(nn.Module):
+# GCN model with TOGL layer
+class TopoGCN(nn.Module):
     def __init__(self):
-        super(GCN, self).__init__()
+        super(TopoGCN, self).__init__()
         self.conv1 = GCNConv(1, 32)
-        self.conv2 = GCNConv(32, 64)
-        self.conv3 = GCNConv(64, 128)
+        self.togl = TOGLWithSelfAttention(32, 8, 32, 32, "mean")
+        self.conv3 = GCNConv(32, 128)
         self.conv4 = GCNConv(128, 256)
         self.fc1 = nn.Linear(256, 128)
         self.fc2 = nn.Linear(128, 10)
@@ -41,16 +42,16 @@ class GCN(nn.Module):
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         x = F.relu(self.conv1(x, edge_index))
-        x = F.relu(self.conv2(x, edge_index))
+        x = self.togl(x, data)
         x = F.relu(self.conv3(x, edge_index))
         x = F.relu(self.conv4(x, edge_index))
-        x = global_mean_pool(x, batch)  # Global mean pool
+        x = global_mean_pool(x, batch)
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
 
 # Initialize model, loss function, optimizer, and scheduler
-model = GCN().to(device)
+model = TopoGCN().to(device)
 total_params = sum(p.numel() for p in model.parameters())
 print(f"Total number of parameters: {total_params}")
 criterion = nn.CrossEntropyLoss()
