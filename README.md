@@ -5,22 +5,22 @@ Folked from [pytorch topological](https://github.com/aidos-lab/pytorch-topologic
 
 ## Run Experiments
 
-run normal GCN
+run normal GCN (4-layer GCN)
 
 ```
-python test.py
+python GCN.py --dataset {dataset name}
 ```
 
-run normal TOGL
+run normal TGNN (3-layer GCN + 1 TOGL)
 
 ```
-python main.py
+python TGNN.py --dataset {dataset name}
 ```
 
-run attention-based TOGL
+run attention-based TGNN (3-layer GCN + 1 ATOGL)
 
 ```
-python try.py
+python ATGNN.py --dataset {dataset name}
 ```
 
 ## Reference
