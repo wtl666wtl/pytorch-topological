@@ -12,18 +12,28 @@ import random
 import numpy as np
 import time
 from torch_topological.nn.graphs_old import TOGL
+from torch_geometric import transforms
+
+
+class RandomAttributes(object):
+    def __init__(self,d):
+        self.d = d
+    def __call__(self,data):
+        data.x = torch.randn((data.x.shape[0],self.d))
+        return data
 
 
 # GCN model with TOGL layer
 class TopoGCN(nn.Module):
-    def __init__(self):
+    def __init__(self, in_channels=1, n_cls=10, graph_classification=True):
         super(TopoGCN, self).__init__()
-        self.conv1 = GCNConv(1, 32)
+        self.graph_classification = graph_classification
+        self.conv1 = GCNConv(in_channels, 32)
         self.togl = TOGL(32, 8, 32, 32, "mean")
         self.conv3 = GCNConv(32, 128)
         self.conv4 = GCNConv(128, 256)
         self.fc1 = nn.Linear(256, 128)
-        self.fc2 = nn.Linear(128, 10)
+        self.fc2 = nn.Linear(128, n_cls)
 
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
@@ -31,7 +41,8 @@ class TopoGCN(nn.Module):
         x = self.togl(x, data)
         x = F.relu(self.conv3(x, edge_index))
         x = F.relu(self.conv4(x, edge_index))
-        x = global_mean_pool(x, batch)
+        if self.graph_classification:
+            x = global_mean_pool(x, batch)  # Global mean pool
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
@@ -49,6 +60,7 @@ def set_seed(seed):
 def train(model, train_loader, criterion, optimizer, device):
     model.train()
     correct = 0
+    total = 0
     for data in tqdm(train_loader, desc="Training"):
         data = data.to(device)
         optimizer.zero_grad()
@@ -58,27 +70,31 @@ def train(model, train_loader, criterion, optimizer, device):
         optimizer.step()
         pred = output.max(1)[1]
         correct += pred.eq(data.y).sum().item()
-    return correct / len(train_loader.dataset)
+        total += len(data.y)
+    return correct / total
 
 
 def test(model, loader, device):
     model.eval()
     correct = 0
+    total = 0
     with torch.no_grad():
         for data in loader:
             data = data.to(device)
             output = model(data)
             pred = output.max(1)[1]
             correct += pred.eq(data.y).sum().item()
-    return correct / len(loader.dataset)
+            total += len(data.y)
+    return correct / total
 
 
 def main():
-    parser = argparse.ArgumentParser(description='TGCN for GNN Benchmark Dataset')
+    dataset_name = ['MNIST', 'CIFAR10', 'PATTERN', 'CLUSTER']
+    parser = argparse.ArgumentParser(description='GCN for GNN Benchmark Dataset')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size for training')
     parser.add_argument('--learning_rate', type=float, default=0.01, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=200, help='Number of epochs to train')
-    parser.add_argument('--dataset', type=str, default='MNIST', help='Dataset name (e.g., MNIST)')
+    parser.add_argument('--dataset', type=str, default='MNIST', choices=dataset_name, help='Dataset name (e.g., MNIST)')
     parser.add_argument('--train_size', type=int, default=10000, help='Size of training dataset')
     parser.add_argument('--random_state', type=int, default=42, help='Random seed')
 
@@ -91,8 +107,37 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load dataset
-    train_dataset = GNNBenchmarkDataset(root='data', name=args.dataset, split='train')
-    test_dataset = GNNBenchmarkDataset(root='data', name=args.dataset, split='test')
+    transforms_list = []
+
+    name = args.dataset
+    if name == 'MNIST':
+        graph_classification = True
+        num_classes = 10
+        in_channels = 1
+    elif name == 'CIFAR10':
+        graph_classification = True
+        num_classes = 10
+        in_channels = 3
+    elif name == 'PATTERN':
+        graph_classification = False
+        num_classes = 2
+        in_channels = 3
+        transforms_list.append(RandomAttributes(d=3))
+    elif name == 'CLUSTER':
+        graph_classification = False
+        num_classes = 6
+        in_channels = 3
+        transforms_list.append(RandomAttributes(d=3))
+    else:
+        raise RuntimeError('Unsupported dataset')
+
+    if len(transforms_list) > 0:
+        transform = transforms.Compose(transforms_list)
+    else:
+        transform = None
+
+    train_dataset = GNNBenchmarkDataset(root='data', name=args.dataset, split='train', transform=transform)
+    test_dataset = GNNBenchmarkDataset(root='data', name=args.dataset, split='test', transform=transform)
     train_dataset = torch.utils.data.Subset(train_dataset, range(args.train_size))
 
     # Data loaders
@@ -100,7 +145,7 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
     # Initialize model, loss function, optimizer, and scheduler
-    model = TopoGCN().to(device)
+    model = TopoGCN(in_channels, num_classes, graph_classification).to(device)
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total number of parameters: {total_params}")
     criterion = nn.CrossEntropyLoss()
