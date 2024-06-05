@@ -31,6 +31,7 @@ class GraphAttentionLayer(nn.Module):
         self.attention_weights = nn.ParameterList([
             nn.Parameter(torch.Tensor(out_features, out_features)) for _ in range(num_heads)
         ])
+        self.linear = nn.Linear(out_features, 1)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -47,7 +48,6 @@ class GraphAttentionLayer(nn.Module):
             attention_scores.append(attention_score)
 
         attention_scores = torch.stack(attention_scores, dim=1).mean(dim=1)
-        attention_scores = torch.sigmoid(attention_scores)
 
         return attention_scores
 
@@ -70,7 +70,7 @@ class DeepSetLayer(nn.Module):
 
 
 class TOGLWithSelfAttention(nn.Module):
-    def __init__(self, n_features, n_filtrations, hidden_dim, out_dim, aggregation_fn, edge_threshold=100):
+    def __init__(self, n_features, n_filtrations, hidden_dim, out_dim, aggregation_fn, beta=0.1):
         super(TOGLWithSelfAttention, self).__init__()
         self.n_filtrations = n_filtrations
         self.filtrations = nn.Sequential(
@@ -87,7 +87,7 @@ class TOGLWithSelfAttention(nn.Module):
         ])
         self.batch_norm = nn.BatchNorm1d(n_features)
         self.attention_layer = GraphAttentionLayer(n_features, 128, num_heads=4)
-        self.edge_threshold = edge_threshold
+        self.beta = beta
 
     def compute_persistent_homology(self, x, edge_index, vertex_slices, edge_slices, batch, n_nodes):
         filtered_v = self.filtrations(x)
@@ -113,18 +113,14 @@ class TOGLWithSelfAttention(nn.Module):
                 offset = vi
                 f_vertices = filtered_v[filt_index][vi:vj]
                 f_edges = filtered_e[filt_index][ei:ej]
-                print(vi, vj)
+
                 if len(vertices) == 0 or len(edges) == 0:
                     continue
 
-                if len(edges) <= self.edge_threshold:
-                    persistence_diagram = self._compute_persistent_homology(vertices, f_vertices, edges, f_edges,
-                                                                            offset)
+                if 1.0 * len(edges) <= self.beta * (vj-vi) * (vj-vi-1) / 2.0:
+                    persistence_diagram = self._compute_persistent_homology(vertices, f_vertices, edges, f_edges, offset)
                 else:
-                    persistence_diagram = self._compute_0d_homology(vertices, f_vertices, offset)
-
-                print(vi, vj)
-                print(persistence_diagram.shape)
+                    persistence_diagram = torch.stack((f_vertices, f_vertices), dim=1)
                 persistence_diagrams[filt_index, vi:vj] = persistence_diagram
 
         return persistence_diagrams
@@ -156,45 +152,19 @@ class TOGLWithSelfAttention(nn.Module):
 
         return persistence_diagram
 
-    def _compute_0d_homology(self, vertices, f_vertices, offset):
-        st = gd.SimplexTree()
-
-        for v, f in zip(vertices.cpu(), f_vertices.cpu()):
-            st.insert([v.item()], filtration=f.item())
-        st.make_filtration_non_decreasing()
-        st.persistence()
-
-        generators = st.lower_star_persistence_generators()
-        generators_regular, _ = generators
-
-        if len(generators_regular) == 0:
-            return torch.stack((f_vertices, f_vertices), dim=1)
-
-        generators_regular = torch.as_tensor(generators_regular[0], device=f_vertices.device)
-        generators_regular = generators_regular - offset
-        generators_regular = generators_regular.sort(dim=0, stable=True)[0]
-
-        persistence_diagram = torch.stack((f_vertices, f_vertices), dim=1)
-        if len(generators_regular) > 0:
-            persistence_diagram[generators_regular[:, 0], 1] = f_vertices[generators_regular[:, 1]]
-
-        return persistence_diagram
-
     def forward(self, x, data):
         edge_index = data.edge_index
         vertex_slices = torch.Tensor(data._slice_dict["x"]).long().to(x.device)
         edge_slices = torch.Tensor(data._slice_dict["edge_index"]).long().to(x.device)
         batch = data.batch.to(x.device)
-
         attention_weights = self.attention_layer(x, edge_index)
-        #sampled_edges = torch.bernoulli(attention_weights).bool()
         sampled_edges = binary_gumbel_softmax(attention_weights, tau=1, hard=True)
-        print
         topk_indices = torch.nonzero(sampled_edges).squeeze()
         edge_index = edge_index[:, topk_indices]
 
         count_indices = (topk_indices.unsqueeze(0) < edge_slices.unsqueeze(1)).sum(dim=1)
-        edge_slices = edge_slices - count_indices
+        edge_slices = count_indices #edge_slices - count_indices
+
 
         persistence_pairs = self.compute_persistent_homology(
             x,
